@@ -68,6 +68,8 @@ class OpenPositionModel(Base):
     average_entry_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
     last_mark_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
     market_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    stop_loss_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    take_profit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

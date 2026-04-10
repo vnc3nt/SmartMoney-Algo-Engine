@@ -21,6 +21,10 @@ from app.strategies import TradeSide, Signal, SignalSide, MarketDataProvider
 class PaperTradingManager:
     """Receives strategy signals and simulates isolated paper trades."""
 
+    # Default risk parameters
+    STOP_LOSS_PCT = Decimal("0.05")  # -5%
+    TAKE_PROFIT_PCT = Decimal("0.15")  # +15%
+
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -113,6 +117,91 @@ class PaperTradingManager:
                     existing.daily_pnl = daily_pnl
                     existing.total_return_pct = total_return_pct
 
+    async def check_exits(self) -> None:
+        """Check all open positions for stop-loss and take-profit hits."""
+        async with self._session_factory() as session:
+            async with session.begin():
+                # Get all open positions
+                positions = (
+                    await session.execute(select(OpenPositionModel))
+                ).scalars().all()
+
+                for position in positions:
+                    try:
+                        # Fetch current price
+                        current_price = await self._market_data.get_last_price(position.ticker)
+                        position.last_mark_price = current_price
+
+                        # Check stop-loss
+                        if position.stop_loss_price and current_price <= position.stop_loss_price:
+                            await self._exit_position(
+                                session, position, current_price, "Stop-Loss"
+                            )
+                            continue
+
+                        # Check take-profit
+                        if position.take_profit_price and current_price >= position.take_profit_price:
+                            await self._exit_position(
+                                session, position, current_price, "Take-Profit"
+                            )
+                            continue
+
+                        # Update market value
+                        position.market_value = (position.quantity * current_price).quantize(
+                            Decimal("0.0001")
+                        )
+                        position.updated_at = datetime.now(timezone.utc)
+                    except Exception:
+                        # Skip on error, continue with next position
+                        continue
+
+                await session.flush()
+
+    async def _exit_position(
+        self,
+        session: AsyncSession,
+        position: OpenPositionModel,
+        exit_price: Decimal,
+        reason: str,
+    ) -> None:
+        """Close an open position and record the trade."""
+        portfolio = await session.scalar(
+            select(PortfolioModel).where(PortfolioModel.id == position.portfolio_id)
+        )
+
+        quantity = position.quantity
+        gross_notional = (quantity * exit_price).quantize(Decimal("0.0001"))
+        realized_pnl = (
+            (exit_price - position.average_entry_price) * quantity
+        ).quantize(Decimal("0.0001"))
+
+        # Update portfolio cash
+        portfolio.cash_balance = (portfolio.cash_balance + gross_notional).quantize(
+            Decimal("0.0001")
+        )
+
+        # Record exit trade
+        session.add(
+            TradeHistoryModel(
+                portfolio_id=position.portfolio_id,
+                strategy_id=position.strategy_id,
+                ticker=position.ticker,
+                side=TradeSide.SELL.value,
+                quantity=quantity,
+                signal_price=position.last_mark_price or exit_price,
+                executed_price=exit_price,
+                gross_notional=gross_notional,
+                slippage_amount=Decimal("0"),
+                fees=Decimal("0"),
+                realized_pnl=realized_pnl,
+                reason=reason,
+                executed_at=datetime.now(timezone.utc),
+            )
+        )
+
+        # Delete open position
+        await session.delete(position)
+
     async def _execute_buy(
         self,
         session: AsyncSession,
@@ -142,6 +231,10 @@ class PaperTradingManager:
         )
 
         if position is None:
+            # Calculate stop-loss and take-profit prices
+            sl_price = (executed_price * (Decimal("1") - self.STOP_LOSS_PCT)).quantize(Decimal("0.00000001"))
+            tp_price = (executed_price * (Decimal("1") + self.TAKE_PROFIT_PCT)).quantize(Decimal("0.00000001"))
+
             session.add(
                 OpenPositionModel(
                     portfolio_id=portfolio.id,
@@ -151,6 +244,8 @@ class PaperTradingManager:
                     average_entry_price=executed_price,
                     last_mark_price=executed_price,
                     market_value=gross_notional,
+                    stop_loss_price=sl_price,
+                    take_profit_price=tp_price,
                 )
             )
         else:
@@ -162,6 +257,14 @@ class PaperTradingManager:
             position.average_entry_price = new_avg
             position.last_mark_price = executed_price
             position.market_value = (new_total_qty * executed_price).quantize(Decimal("0.0001"))
+
+            # Update SL/TP based on new average entry price
+            position.stop_loss_price = (new_avg * (Decimal("1") - self.STOP_LOSS_PCT)).quantize(
+                Decimal("0.00000001")
+            )
+            position.take_profit_price = (new_avg * (Decimal("1") + self.TAKE_PROFIT_PCT)).quantize(
+                Decimal("0.00000001")
+            )
 
         session.add(
             TradeHistoryModel(

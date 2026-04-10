@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Protocol, Sequence
+import os
 
 import yfinance as yf
+import finnhub
 
 from app.enums import ExecutionFrequency, SignalSide, TradeSide
 
@@ -54,14 +56,77 @@ class Signal:
 
 
 class MarketDataProvider:
-    """Fetch real market data using yfinance."""
+    """Fetch real market data using yfinance and Finnhub."""
 
     VOLUME_SPIKE_TICKERS = ["AAPL", "TSLA", "MSFT", "NVDA", "AMD"]
+    INSIDER_WATCH_TICKERS = ["AAPL", "TSLA", "MSFT", "NVDA", "AMD", "GOOG", "META"]
+    MIN_INSIDER_TRANSACTION_USD = Decimal("1000000")  # Only track insider trades > $1M
+
+    def __init__(self) -> None:
+        self.finnhub_client = None
+        api_key = os.getenv("FINNHUB_API_KEY")
+        if api_key:
+            try:
+                self.finnhub_client = finnhub.Client(api_key=api_key)
+            except Exception:
+                pass
 
     async def get_recent_ceo_buys(self) -> list[InsiderEvent]:
-        """TODO: Replace with SEC Form 4 / insider API integration."""
-        # Placeholder for real data integration
-        return []
+        """Fetch recent CEO insider buys from Finnhub."""
+        if not self.finnhub_client:
+            return []
+
+        events = []
+        now = datetime.now(timezone.utc)
+
+        for ticker in self.INSIDER_WATCH_TICKERS:
+            try:
+                # Finnhub insider transactions endpoint
+                transactions = self.finnhub_client.insider_transactions(ticker)
+
+                if not transactions or "data" not in transactions:
+                    continue
+
+                for txn in transactions["data"]:
+                    # Filter for CEO buys from last 7 days
+                    filing_date = datetime.fromisoformat(txn.get("filingDate", "").replace("Z", "+00:00"))
+                    if (now - filing_date).days > 7:
+                        continue
+
+                    # Only CEO/President level transactions
+                    person_relation = txn.get("personRelation", [])
+                    if not any(r in person_relation for r in ["CEO", "President", "Chief"]):
+                        continue
+
+                    # Only BUY transactions
+                    transaction_type = txn.get("transactionType", "")
+                    if transaction_type != "Buy":
+                        continue
+
+                    # Get transaction value
+                    shares = Decimal(str(txn.get("shares", 0)))
+                    price = Decimal(str(txn.get("price", 0)))
+                    notional = shares * price
+
+                    # Only significant transactions
+                    if notional < self.MIN_INSIDER_TRANSACTION_USD:
+                        continue
+
+                    events.append(
+                        InsiderEvent(
+                            ticker=ticker,
+                            insider_role=txn.get("personRelation", ["Unknown"])[0],
+                            transaction_type="BUY",
+                            shares=int(shares),
+                            price=price,
+                            filed_at=filing_date,
+                        )
+                    )
+            except Exception:
+                # Skip ticker on API error
+                continue
+
+        return events
 
     async def get_unusual_volume_candidates(self) -> list[VolumeSpike]:
         """Fetch last 5 days of volume data and detect spikes (>150%)."""
@@ -189,6 +254,7 @@ class StrategyALegalInsider(BaseStrategy):
         now = datetime.now(timezone.utc)
 
         for event in analyzed_data:
+            # Signal for significant insider CEO buys (>$2.5M notional)
             if event.usd_notional >= Decimal("2500000"):
                 signals.append(
                     Signal(
@@ -198,7 +264,8 @@ class StrategyALegalInsider(BaseStrategy):
                         signal_price=event.price,
                         created_at=now,
                         confidence=Decimal("0.82"),
-                        reason=f"CEO buy detected, notional={event.usd_notional}",
+                        allocation_fraction=Decimal("0.05"),
+                        reason=f"Insider CEO buy: {event.insider_role} purchased {event.shares} shares at ${event.price}",
                     )
                 )
         return signals

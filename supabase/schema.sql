@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS trades.open_positions (
     average_entry_price NUMERIC(18, 8) NOT NULL,
     last_mark_price NUMERIC(18, 8),
     market_value NUMERIC(18, 4),
+    stop_loss_price NUMERIC(18, 8),
+    take_profit_price NUMERIC(18, 8),
     opened_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(portfolio_id, ticker)
@@ -96,9 +98,17 @@ CREATE INDEX idx_performance_snapshots_portfolio ON trades.performance_snapshots
 CREATE INDEX idx_performance_snapshots_strategy ON trades.performance_snapshots(strategy_id);
 CREATE INDEX idx_performance_snapshots_date ON trades.performance_snapshots(snapshot_date DESC);
 
--- Enable RLS (Row Level Security) for Supabase
+-- Enable RLS (Row Level Security) on the actual tables in trades schema
 ALTER TABLE trades.strategies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trades.portfolios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trades.open_positions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trades.trade_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trades.performance_snapshots ENABLE ROW LEVEL SECURITY;
+
+-- Create permissive policies to allow all access (Development mode only!)
+-- TODO: In production, restrict to authenticated users
+CREATE POLICY "Allow all access" ON trades.strategies FOR ALL USING (true);
+CREATE POLICY "Allow all access" ON trades.portfolios FOR ALL USING (true);
+CREATE POLICY "Allow all access" ON trades.open_positions FOR ALL USING (true);
+CREATE POLICY "Allow all access" ON trades.trade_history FOR ALL USING (true);
+CREATE POLICY "Allow all access" ON trades.performance_snapshots FOR ALL USING (true);

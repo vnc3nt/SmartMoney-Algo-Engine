@@ -10,10 +10,10 @@ export function useRealtimeSnapshots(strategyId: string) {
 
   useEffect(() => {
     const supabase = createClient();
-    // 1. Erstladen der Daten
+    // 1. Initial data load
     const fetchInitial = async () => {
       const { data } = await supabase
-        .schema("trades")                         // ← dein custom Schema
+        .schema("trades")
         .from("performance_snapshots")
         .select("*")
         .eq("strategy_id", strategyId)
@@ -25,14 +25,14 @@ export function useRealtimeSnapshots(strategyId: string) {
 
     fetchInitial();
 
-    // 2. Realtime-Kanal für neue Snapshots
+    // 2. Realtime channel for new snapshots
     const channel: RealtimeChannel = supabase
       .channel(`snapshots:${strategyId}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
-          schema: "trades",                       // ← custom Schema angeben
+          schema: "trades",
           table: "performance_snapshots",
           filter: `strategy_id=eq.${strategyId}`,
         },
@@ -60,7 +60,7 @@ export function useRealtimeSnapshots(strategyId: string) {
       )
       .subscribe();
 
-    // 3. Cleanup beim Unmount — WICHTIG, sonst Memory Leak
+    // 3. Cleanup on unmount
     return () => {
       supabase.removeChannel(channel);
     };
@@ -91,7 +91,7 @@ export function useRealtimePositions(portfolioId: string) {
       .on(
         "postgres_changes",
         {
-          event: "*",                             // INSERT, UPDATE, DELETE
+          event: "*",
           schema: "trades",
           table: "open_positions",
           filter: `portfolio_id=eq.${portfolioId}`,

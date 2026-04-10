@@ -1,6 +1,7 @@
 # app/main.py
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -11,17 +12,25 @@ load_dotenv()
 
 from fastapi import FastAPI  # noqa: E402  (nach load_dotenv, das ist Absicht)
 import uvicorn  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.routers.portfolio import router as portfolio_router  # noqa: E402
 from app.routers.trigger import router as trigger_router  # noqa: E402
 
 
-# 2. Lifespan
+# 2. Lifespan with startup database seeding
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # TODO: APScheduler starten
+    # Startup: Seed database
+    try:
+        from seed_database import seed_database
+        await seed_database()
+    except Exception as e:
+        print(f"Warning: Database seeding failed: {e}")
+
     yield
-    # TODO: APScheduler stoppen
+
+    # Shutdown: TODO: APScheduler stoppen
 
 
 # 3. app erstellen
@@ -31,10 +40,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# 3.5 CORS Middleware hinzufügen
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",      # Local development
+        "http://192.168.105.87:3000", # Network development
+        "http://192.168.1.0/24",      # Any local network
+        "http://127.0.0.1:3000",      # Localhost
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # 4. Router registrieren
-app.include_router(portfolio_router, prefix="/portfolios", tags=["Portfolios"])
-app.include_router(trigger_router,   prefix="/trigger",   tags=["Trigger"])
+app.include_router(portfolio_router, tags=["Portfolios"])
+app.include_router(trigger_router, tags=["Trigger"])
 
 
 # 5. Health-Endpunkt
