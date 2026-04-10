@@ -35,7 +35,11 @@ class PaperTradingManager:
         self._market_data = market_data
         self._slippage_bps = slippage_bps
 
-    async def process_signals(self, signals: Sequence[Signal]) -> None:
+    async def process_signals(
+        self,
+        signals: Sequence[Signal],
+        simulated_dt: datetime | None = None,
+    ) -> None:
         if not signals:
             return
 
@@ -46,17 +50,22 @@ class PaperTradingManager:
                     portfolio = await self._require_portfolio(session, strategy.id)
 
                     if signal.side == SignalSide.BUY:
-                        await self._execute_buy(session, strategy, portfolio, signal)
+                        await self._execute_buy(session, strategy, portfolio, signal, simulated_dt=simulated_dt)
                     elif signal.side == SignalSide.SELL:
-                        await self._execute_sell(session, strategy, portfolio, signal)
+                        await self._execute_sell(session, strategy, portfolio, signal, simulated_dt=simulated_dt)
 
                 await session.flush()
 
+        snapshot_date_override = simulated_dt.date() if simulated_dt else None
         touched_strategy_keys = {signal.strategy_key for signal in signals}
         for strategy_key in touched_strategy_keys:
-            await self.snapshot_daily_equity(strategy_key)
+            await self.snapshot_daily_equity(strategy_key, snapshot_date_override=snapshot_date_override)
 
-    async def snapshot_daily_equity(self, strategy_key: str) -> None:
+    async def snapshot_daily_equity(
+        self,
+        strategy_key: str,
+        snapshot_date_override: date | None = None,
+    ) -> None:
         async with self._session_factory() as session:
             async with session.begin():
                 strategy = await self._require_strategy(session, strategy_key)
@@ -73,7 +82,7 @@ class PaperTradingManager:
                 equity = (portfolio.cash_balance + market_value).quantize(Decimal("0.0001"))
                 portfolio.equity_value = equity
 
-                snapshot_day = date.today()
+                snapshot_day = snapshot_date_override or date.today()
                 previous_snapshot = await session.scalar(
                     select(PerformanceSnapshotModel)
                     .where(PerformanceSnapshotModel.portfolio_id == portfolio.id)
@@ -208,6 +217,7 @@ class PaperTradingManager:
         strategy: StrategyModel,
         portfolio: PortfolioModel,
         signal: Signal,
+        simulated_dt: datetime | None = None,
     ) -> None:
         executed_price = self._apply_slippage(signal.signal_price, TradeSide.BUY)
         budget = (portfolio.cash_balance * signal.allocation_fraction).quantize(Decimal("0.0001"))
@@ -280,7 +290,7 @@ class PaperTradingManager:
                 fees=Decimal("0"),
                 realized_pnl=None,
                 reason=signal.reason,
-                executed_at=datetime.now(timezone.utc),
+                executed_at=simulated_dt or datetime.now(timezone.utc),
             )
         )
 
@@ -290,6 +300,7 @@ class PaperTradingManager:
         strategy: StrategyModel,
         portfolio: PortfolioModel,
         signal: Signal,
+        simulated_dt: datetime | None = None,
     ) -> None:
         position = await session.scalar(
             select(OpenPositionModel).where(
@@ -325,7 +336,7 @@ class PaperTradingManager:
                 fees=Decimal("0"),
                 realized_pnl=realized_pnl,
                 reason=signal.reason,
-                executed_at=datetime.now(timezone.utc),
+                executed_at=simulated_dt or datetime.now(timezone.utc),
             )
         )
 

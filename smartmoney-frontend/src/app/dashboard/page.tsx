@@ -1,12 +1,13 @@
 "use client";
 
 import { useStrategies } from "@/hooks/useStrategies";
-import { EquityChart } from "@/components/dashboard/EquityChart";
+import { StrategyChart } from "@/components/dashboard/StrategyChart";
 import { PositionsTable } from "@/components/dashboard/PositionsTable";
 import { TradesFeed } from "@/components/dashboard/TradesFeed";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
 import type { OpenPosition, Trade, Strategy, Portfolio } from "@/types/trading";
 
 export default function DashboardPage() {
@@ -84,25 +85,31 @@ export default function DashboardPage() {
 
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 p-6">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold mb-4">SmartMoney Algo-Engine</h1>
+      <div className="mb-6 flex items-center justify-between flex-wrap gap-4">
+        <h1 className="text-xl font-semibold">SmartMoney Algo-Engine</h1>
+        <Link
+          href="/analytics/leaderboard"
+          className="rounded-lg border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 transition-colors"
+        >
+          📊 Leaderboard
+        </Link>
+      </div>
 
-        {/* Strategy Selector */}
-        <div className="flex gap-2 flex-wrap">
-          {strategies.map((strategy) => (
-            <button
-              key={strategy.id}
-              onClick={() => setSelectedStrategyId(strategy.id)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                selectedStrategyId === strategy.id
-                  ? "bg-blue-600 text-white"
-                  : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
-              }`}
-            >
-              {strategy.name}
-            </button>
-          ))}
-        </div>
+      {/* Strategy Selector */}
+      <div className="flex gap-2 flex-wrap mb-6">
+        {strategies.map((strategy) => (
+          <button
+            key={strategy.id}
+            onClick={() => setSelectedStrategyId(strategy.id)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              selectedStrategyId === strategy.id
+                ? "bg-blue-600 text-white"
+                : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+            }`}
+          >
+            {strategy.name}
+          </button>
+        ))}
       </div>
 
       {loading ? (
@@ -155,10 +162,13 @@ export default function DashboardPage() {
             />
           </div>
 
-          {/* Equity Chart */}
+          {/* Strategy Chart with trade markers and KPI cards */}
           <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4 mb-8">
-            <h2 className="text-sm font-medium mb-4">{selectedStrategy.name} - Equity Curve</h2>
-            <EquityChart strategyId={selectedStrategy.id} />
+            <h2 className="text-sm font-medium mb-4">{selectedStrategy.name} — Equity Curve & Trades</h2>
+            <StrategyChart
+              strategyId={selectedStrategy.id}
+              strategyKey={selectedStrategy.strategy_key}
+            />
           </div>
 
           {/* Positionen und Trades */}
