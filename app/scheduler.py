@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from fastapi import FastAPI
+
+from app.base import AsyncSessionFactory, settings
+from app.strategies import (
+    BaseStrategy,
+    ExecutionFrequency,
+    InMemorySignalStore,
+    MarketDataProvider,
+    SignalStore,
+    StrategyABCombined,
+    StrategyALegalInsider,
+    StrategyBUnusualVolume,
+)
+from app.paper_trading import PaperTradingManager
 
 
 class StrategyOrchestrator:
@@ -96,5 +109,3 @@ async def lifespan(_: FastAPI):
     finally:
         scheduler.shutdown(wait=False)
 
-
-app = FastAPI(title=settings.app_name, lifespan=lifespan)

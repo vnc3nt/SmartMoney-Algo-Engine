@@ -202,7 +202,44 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-app = FastAPI(title=settings.app_name)
+# base.py — Ende der Datei ersetzen
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Lazy import um circular imports zu vermeiden
+    from app.scheduler import scheduler, strategy_registry, orchestrator, build_trigger
+    from apscheduler.triggers.cron import CronTrigger
+
+    for strategy in strategy_registry.values():
+        scheduler.add_job(
+            orchestrator.run_strategy,
+            trigger=build_trigger(strategy.execution_frequency),
+            args=[strategy.strategy_key],
+            id=strategy.strategy_key,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=30,
+        )
+    scheduler.add_job(
+        orchestrator.snapshot_all,
+        trigger=CronTrigger(hour=23, minute=59),
+        id="daily_equity_snapshots",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.start()
+    yield
+    scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
+
+
+# Router einbinden
+from app.routers.portfolio import router as portfolio_router
+app.include_router(portfolio_router)
 
 
 @app.get("/health")
@@ -211,7 +248,7 @@ async def healthcheck() -> dict[str, str]:
 
 
 @app.get("/strategies")
-async def list_strategies(session: AsyncSession = Depends(get_session)) -> list[dict[str, str]]:
+async def list_strategies(session: AsyncSession = Depends(get_session)) -> list[dict]:
     rows = (await session.execute(select(StrategyModel))).scalars().all()
     return [
         {
@@ -221,3 +258,15 @@ async def list_strategies(session: AsyncSession = Depends(get_session)) -> list[
         }
         for row in rows
     ]
+
+
+# Debug-Endpunkt (vor Prod entfernen!)
+@app.post("/api/v1/debug/run-strategy/{strategy_key}")
+async def debug_run_strategy(strategy_key: str) -> dict:
+    from app.scheduler import strategy_registry, signal_store, trading_manager
+    if strategy_key not in strategy_registry:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    signals = await strategy_registry[strategy_key].run(signal_store)
+    await trading_manager.process_signals(signals)
+    return {"signals_generated": len(signals), "tickers": [s.ticker for s in signals]}

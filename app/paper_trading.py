@@ -2,7 +2,23 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import ROUND_DOWN, Decimal
+from typing import Sequence
+from uuid import UUID
+
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from app.base import (
+    AsyncSessionFactory,
+    PortfolioModel,
+    StrategyModel,
+    OpenPositionModel,
+    TradeHistoryModel,
+    PerformanceSnapshotModel,
+    TradeSide,
+)
+from app.strategies import Signal, SignalSide, MarketDataProvider
 
 
 class PaperTradingManager:
