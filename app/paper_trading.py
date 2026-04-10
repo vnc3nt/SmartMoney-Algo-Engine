@@ -9,16 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.base import (
-    AsyncSessionFactory,
-    PortfolioModel,
-    StrategyModel,
-    OpenPositionModel,
-    TradeHistoryModel,
-    PerformanceSnapshotModel,
-    TradeSide,
+from app.models import (
+    OpenPositionModel, PortfolioModel,
+    StrategyModel, TradeHistoryModel, PerformanceSnapshotModel,
 )
-from app.strategies import Signal, SignalSide, MarketDataProvider
+from app.enums import TradeSide, SignalSide
+
+from app.strategies import TradeSide, Signal, SignalSide, MarketDataProvider
 
 
 class PaperTradingManager:

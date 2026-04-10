@@ -1,6 +1,12 @@
 import os
 from dotenv import load_dotenv
 
+from app.routers.trigger import router as trigger_router
+from app.routers.portfolio import router as portfolio_router
+
+app.include_router(trigger_router)
+app.include_router(portfolio_router)
+
 load_dotenv()  # .env vor allem anderen laden!
 
 import uvicorn

@@ -6,14 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.base import (
-    get_session,
+from app.models import (
     StrategyModel,
     PortfolioModel,
     OpenPositionModel,
     TradeHistoryModel,
     PerformanceSnapshotModel,
 )
+from app.dependencies import get_session
+from app.enums import ExecutionFrequency, SignalSide, TradeSide
 
 router = APIRouter(prefix="/api/v1", tags=["portfolio"])
 
