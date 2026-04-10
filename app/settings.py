@@ -5,6 +5,10 @@ import os
 from dataclasses import dataclass
 from decimal import Decimal
 
+from dotenv import load_dotenv
+
+load_dotenv()  # lädt .env, bevor os.environ gelesen wird
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -15,6 +19,10 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    return Settings(
-        database_url=os.environ["DATABASE_URL"],
-    )
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL ist nicht gesetzt. "
+            "Lege eine .env-Datei an oder exportiere die Variable."
+        )
+    return Settings(database_url=url)
