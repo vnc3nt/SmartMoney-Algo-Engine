@@ -3,7 +3,7 @@
 import type { OpenPosition } from "@/types/trading";
 
 interface Props {
-  positions: OpenPosition[];   // NUR positions, kein strategies
+  positions: OpenPosition[];
 }
 
 export function PositionsTable({ positions }: Props) {
@@ -28,11 +28,11 @@ export function PositionsTable({ positions }: Props) {
         {positions.map((p) => (
           <tr key={p.id} className="border-b border-neutral-800/50">
             <td className="py-2 pr-4 font-medium">{p.ticker}</td>
-            <td className="py-2 pr-4">{Number(p.quantity).toFixed(4)}</td>
+            <td className="py-2 pr-4">{p.quantity.toFixed(4)}</td>
             <td className="py-2 pr-4">
-              ${Number(p.average_entry_price).toFixed(2)}
+              ${p.average_entry_price.toFixed(2)}
             </td>
-            <td className="py-2">${Number(p.market_value ?? 0).toFixed(2)}</td>
+            <td className="py-2">${(p.market_value ?? 0).toFixed(2)}</td>
           </tr>
         ))}
       </tbody>

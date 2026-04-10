@@ -49,15 +49,32 @@ export default async function DashboardPage() {
 
   // Ersten Portfolio-Eintrag für KPIs nehmen
   const firstPortfolio = portfolioList[0];
+  const firstStrategy = strategyList[0];
   const equity = firstPortfolio ? Number(firstPortfolio.equity_value) : 100000;
   const starting = firstPortfolio ? Number(firstPortfolio.starting_cash) : 100000;
   const totalReturn = ((equity - starting) / starting) * 100;
+
+  // Performance-Metriken vom Backend abrufen
+  let metrics = { roi: 0, win_rate: 0, max_drawdown: 0, sharpe_ratio: 0 };
+  if (firstStrategy && firstPortfolio) {
+    try {
+      const response = await fetch(
+        `http://localhost:8000/api/v1/portfolio/${firstStrategy.id}/metrics`,
+        { cache: "no-store" }
+      );
+      if (response.ok) {
+        metrics = await response.json();
+      }
+    } catch (error) {
+      console.error("Failed to fetch metrics:", error);
+    }
+  }
 
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 p-6">
       <h1 className="text-xl font-semibold mb-6">SmartMoney Algo-Engine</h1>
 
-      {/* KPI-Reihe */}
+      {/* KPI-Reihe mit echten Metriken */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <KpiCard
           label="Equity"
@@ -65,9 +82,31 @@ export default async function DashboardPage() {
           positive={equity >= starting}
         />
         <KpiCard
+          label="ROI"
+          value={`${metrics.roi.toFixed(2)}%`}
+          positive={metrics.roi >= 0}
+        />
+        <KpiCard
+          label="Win Rate"
+          value={`${metrics.win_rate.toFixed(2)}%`}
+        />
+        <KpiCard
+          label="Max Drawdown"
+          value={`${metrics.max_drawdown.toFixed(2)}%`}
+          positive={false}
+        />
+      </div>
+
+      {/* Zusätzliche Metriken Zeile */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <KpiCard
           label="Total Return"
           value={`${totalReturn.toFixed(2)}%`}
           positive={totalReturn >= 0}
+        />
+        <KpiCard
+          label="Sharpe Ratio"
+          value={metrics.sharpe_ratio.toFixed(2)}
         />
         <KpiCard
           label="Strategien aktiv"

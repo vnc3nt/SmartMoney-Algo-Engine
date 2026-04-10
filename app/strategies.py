@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Protocol, Sequence
 
+import yfinance as yf
+
 from app.enums import ExecutionFrequency, SignalSide, TradeSide
 
 
@@ -31,12 +33,12 @@ class VolumeSpike:
     close: Decimal
     previous_close: Decimal
     current_volume: int
-    avg_volume_20: int
+    avg_volume_5: int
     observed_at: datetime
 
     @property
     def volume_ratio(self) -> Decimal:
-        return Decimal(self.current_volume) / Decimal(max(self.avg_volume_20, 1))
+        return Decimal(self.current_volume) / Decimal(max(self.avg_volume_5, 1))
 
 
 @dataclass(frozen=True)
@@ -52,58 +54,67 @@ class Signal:
 
 
 class MarketDataProvider:
-    """Mock provider for market and insider data."""
+    """Fetch real market data using yfinance."""
+
+    VOLUME_SPIKE_TICKERS = ["AAPL", "TSLA", "MSFT", "NVDA", "AMD"]
 
     async def get_recent_ceo_buys(self) -> list[InsiderEvent]:
-        # TODO: Replace with SEC Form 4 / insider API integration.
-        return [
-            InsiderEvent(
-                ticker="NVDA",
-                insider_role="CEO",
-                transaction_type="BUY",
-                shares=25000,
-                price=Decimal("912.50"),
-                filed_at=datetime.now(timezone.utc) - timedelta(hours=3),
-            ),
-            InsiderEvent(
-                ticker="MSFT",
-                insider_role="CEO",
-                transaction_type="BUY",
-                shares=4000,
-                price=Decimal("421.20"),
-                filed_at=datetime.now(timezone.utc) - timedelta(hours=4),
-            ),
-        ]
+        """TODO: Replace with SEC Form 4 / insider API integration."""
+        # Placeholder for real data integration
+        return []
 
     async def get_unusual_volume_candidates(self) -> list[VolumeSpike]:
-        # TODO: Replace with Polygon / IEX / Alpaca / TwelveData websocket + intraday bars.
-        return [
-            VolumeSpike(
-                ticker="NVDA",
-                close=Decimal("918.10"),
-                previous_close=Decimal("905.00"),
-                current_volume=4_800_000,
-                avg_volume_20=1_300_000,
-                observed_at=datetime.now(timezone.utc),
-            ),
-            VolumeSpike(
-                ticker="AAPL",
-                close=Decimal("201.80"),
-                previous_close=Decimal("202.10"),
-                current_volume=3_100_000,
-                avg_volume_20=1_700_000,
-                observed_at=datetime.now(timezone.utc),
-            ),
-        ]
+        """Fetch last 5 days of volume data and detect spikes (>150%)."""
+        spikes = []
+        now = datetime.now(timezone.utc)
+
+        for ticker in self.VOLUME_SPIKE_TICKERS:
+            try:
+                # Fetch last 5 days of OHLCV data
+                data = yf.download(ticker, period="5d", progress=False, multi_level_names=False)
+
+                if data.empty or len(data) < 2:
+                    continue
+
+                # Get last two rows: previous and current
+                prev_row = data.iloc[-2]
+                curr_row = data.iloc[-1]
+
+                current_volume = int(curr_row["Volume"])
+                close = Decimal(str(curr_row["Close"]))
+                previous_close = Decimal(str(prev_row["Close"]))
+
+                # Average volume of last 5 days
+                avg_volume_5 = int(data["Volume"].mean())
+
+                # Detect spike: current volume > 150% of 5-day average
+                volume_ratio = Decimal(current_volume) / Decimal(max(avg_volume_5, 1))
+                if volume_ratio >= Decimal("1.50"):
+                    spikes.append(
+                        VolumeSpike(
+                            ticker=ticker,
+                            close=close,
+                            previous_close=previous_close,
+                            current_volume=current_volume,
+                            avg_volume_5=avg_volume_5,
+                            observed_at=now,
+                        )
+                    )
+            except Exception:
+                # Skip ticker if data fetch fails
+                continue
+
+        return spikes
 
     async def get_last_price(self, ticker: str) -> Decimal:
-        # TODO: Replace with real-time quote API.
-        mock_prices: dict[str, Decimal] = {
-            "NVDA": Decimal("919.40"),
-            "MSFT": Decimal("424.75"),
-            "AAPL": Decimal("200.90"),
-        }
-        return mock_prices.get(ticker, Decimal("100.00"))
+        """Fetch the last available price for a ticker."""
+        try:
+            data = yf.download(ticker, period="1d", progress=False, multi_level_names=False)
+            if data.empty:
+                return Decimal("100.00")
+            return Decimal(str(data["Close"].iloc[-1]))
+        except Exception:
+            return Decimal("100.00")
 
 
 class SignalStore(Protocol):
@@ -208,8 +219,8 @@ class StrategyBUnusualVolume(BaseStrategy):
         signals: list[Signal] = []
 
         for spike in analyzed_data:
-            bullish_price_action = spike.close > spike.previous_close
-            if spike.volume_ratio >= Decimal("3.0") and bullish_price_action:
+            # Signal when volume > 150% of 5-day average
+            if spike.volume_ratio >= Decimal("1.50"):
                 signals.append(
                     Signal(
                         strategy_key=self.strategy_key,
@@ -217,10 +228,10 @@ class StrategyBUnusualVolume(BaseStrategy):
                         side=SignalSide.BUY,
                         signal_price=spike.close,
                         created_at=spike.observed_at,
-                        confidence=Decimal("0.76"),
+                        confidence=Decimal("0.75"),
                         reason=(
-                            f"Volume spike ratio={spike.volume_ratio.quantize(Decimal('0.01'))}, "
-                            "positive intraday momentum"
+                            f"Volume spike: {spike.current_volume} vs avg {spike.avg_volume_5} "
+                            f"(ratio={spike.volume_ratio.quantize(Decimal('0.01'))})"
                         ),
                     )
                 )

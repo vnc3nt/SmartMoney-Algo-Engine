@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from app.models import (
 )
 from app.dependencies import get_session
 from app.enums import ExecutionFrequency, SignalSide, TradeSide
+from app.metrics import PerformanceMetrics
 
 router = APIRouter(prefix="/api/v1", tags=["portfolio"])
 
@@ -124,3 +126,35 @@ async def get_open_positions(
         }
         for r in rows
     ]
+
+
+@router.get("/portfolio/{strategy_id}/metrics")
+async def get_performance_metrics(
+    strategy_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Get performance metrics: ROI, Win Rate, Max Drawdown, Sharpe Ratio."""
+    strategy = await session.scalar(
+        select(StrategyModel).where(StrategyModel.id == strategy_id)
+    )
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    portfolio = await session.scalar(
+        select(PortfolioModel).where(PortfolioModel.strategy_id == strategy.id)
+    )
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    metrics = await PerformanceMetrics.get_all_metrics(
+        session, str(portfolio.id), str(strategy.id)
+    )
+
+    return {
+        "strategy_id": strategy_id,
+        "strategy_key": strategy.strategy_key,
+        "roi": float(metrics["roi"]),
+        "win_rate": float(metrics["win_rate"]),
+        "max_drawdown": float(metrics["max_drawdown"]),
+        "sharpe_ratio": float(metrics["sharpe_ratio"]),
+    }

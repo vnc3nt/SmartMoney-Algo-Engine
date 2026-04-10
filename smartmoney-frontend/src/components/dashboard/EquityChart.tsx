@@ -1,19 +1,19 @@
-"use client";                                     // ← muss ganz oben stehen
+"use client";
 
 import { useRealtimeSnapshots } from "@/hooks/useRealtimePortfolio";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 interface Props {
-  strategyId: string;                             // ← kein snapshots-Prop mehr
+  strategyId: string;
 }
 
 export function EquityChart({ strategyId }: Props) {
-  const snapshots = useRealtimeSnapshots(strategyId); // ← Live-Daten
+  const snapshots = useRealtimeSnapshots(strategyId);
 
   const chartData = snapshots.map((s) => ({
-    date: s.snapshot_date,
-    equity: Number(s.equity_value),
-    pnl: Number(s.daily_pnl),
+    date: new Date(s.snapshot_date).toLocaleDateString("de-DE"),
+    equity: s.equity_value,
+    pnl: s.daily_pnl,
   }));
 
   return (
@@ -25,10 +25,10 @@ export function EquityChart({ strategyId }: Props) {
           tick={{ fontSize: 12 }}
         />
         <Tooltip
-            formatter={(value) => [
-                new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value)),
-                "Equity"
-            ]}
+          formatter={(value: number) => [
+            new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value),
+            "Equity"
+          ]}
         />
         <Line
           type="monotone"

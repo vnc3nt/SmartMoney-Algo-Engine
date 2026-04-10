@@ -3,7 +3,7 @@
 import type { Trade } from "@/types/trading";
 
 interface Props {
-  trades: Trade[];   // NUR trades, kein strategies
+  trades: Trade[];
 }
 
 export function TradesFeed({ trades }: Props) {
@@ -30,7 +30,7 @@ export function TradesFeed({ trades }: Props) {
             {t.side}
           </span>
           <span className="tabular-nums text-neutral-300">
-            ${Number(t.executed_price).toFixed(2)}
+            ${t.executed_price.toFixed(2)}
           </span>
           <span className="tabular-nums text-neutral-500 text-xs">
             {new Date(t.executed_at).toLocaleDateString("de-DE")}
