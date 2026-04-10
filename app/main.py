@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.routers.portfolio import router as portfolio_router  # noqa: E402
 from app.routers.trigger import router as trigger_router  # noqa: E402
+from app.routers.analytics import router as analytics_router  # noqa: E402
+from app.routers.backtest import router as backtest_router  # noqa: E402
 
 
 # 2. Lifespan with startup database seeding
@@ -58,6 +60,8 @@ app.add_middleware(
 # 4. Router registrieren
 app.include_router(portfolio_router, tags=["Portfolios"])
 app.include_router(trigger_router, tags=["Trigger"])
+app.include_router(analytics_router, tags=["Analytics"])
+app.include_router(backtest_router, tags=["Backtest"])
 
 
 # 5. Health-Endpunkt
