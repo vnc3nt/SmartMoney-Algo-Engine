@@ -12,10 +12,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.models import (
     OpenPositionModel, PortfolioModel,
     StrategyModel, TradeHistoryModel, PerformanceSnapshotModel,
+    NotificationQueueModel, StrategyAllocationModel,
 )
 from app.enums import TradeSide, SignalSide
 
-from app.strategies import TradeSide, Signal, SignalSide, MarketDataProvider
+from app.strategies import Signal, MarketDataProvider
 
 
 class PaperTradingManager:
@@ -220,7 +221,12 @@ class PaperTradingManager:
         simulated_dt: datetime | None = None,
     ) -> None:
         executed_price = self._apply_slippage(signal.signal_price, TradeSide.BUY)
-        budget = (portfolio.cash_balance * signal.allocation_fraction).quantize(Decimal("0.0001"))
+        effective_allocation = await self._resolve_allocation_fraction(
+            session=session,
+            strategy_id=strategy.id,
+            signal_allocation=signal.allocation_fraction,
+        )
+        budget = (portfolio.cash_balance * effective_allocation).quantize(Decimal("0.0001"))
         quantity = (budget / executed_price).quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
 
         if quantity <= Decimal("0"):
@@ -276,22 +282,29 @@ class PaperTradingManager:
                 Decimal("0.00000001")
             )
 
-        session.add(
-            TradeHistoryModel(
-                portfolio_id=portfolio.id,
-                strategy_id=strategy.id,
-                ticker=signal.ticker,
-                side=TradeSide.BUY.value,
-                quantity=quantity,
-                signal_price=signal.signal_price,
-                executed_price=executed_price,
-                gross_notional=gross_notional,
-                slippage_amount=slippage_amount,
-                fees=Decimal("0"),
-                realized_pnl=None,
-                reason=signal.reason,
-                executed_at=simulated_dt or datetime.now(timezone.utc),
-            )
+        trade = TradeHistoryModel(
+            portfolio_id=portfolio.id,
+            strategy_id=strategy.id,
+            ticker=signal.ticker,
+            side=TradeSide.BUY.value,
+            quantity=quantity,
+            signal_price=signal.signal_price,
+            executed_price=executed_price,
+            gross_notional=gross_notional,
+            slippage_amount=slippage_amount,
+            fees=Decimal("0"),
+            realized_pnl=None,
+            reason=signal.reason,
+            executed_at=simulated_dt or datetime.now(timezone.utc),
+        )
+        session.add(trade)
+        await self._enqueue_trade_notification(
+            session=session,
+            strategy=strategy,
+            ticker=signal.ticker,
+            side=TradeSide.BUY,
+            executed_price=executed_price,
+            reason=signal.reason,
         )
 
     async def _execute_sell(
@@ -322,22 +335,29 @@ class PaperTradingManager:
 
         portfolio.cash_balance = (portfolio.cash_balance + gross_notional).quantize(Decimal("0.0001"))
 
-        session.add(
-            TradeHistoryModel(
-                portfolio_id=portfolio.id,
-                strategy_id=strategy.id,
-                ticker=signal.ticker,
-                side=TradeSide.SELL.value,
-                quantity=quantity,
-                signal_price=signal.signal_price,
-                executed_price=executed_price,
-                gross_notional=gross_notional,
-                slippage_amount=slippage_amount,
-                fees=Decimal("0"),
-                realized_pnl=realized_pnl,
-                reason=signal.reason,
-                executed_at=simulated_dt or datetime.now(timezone.utc),
-            )
+        trade = TradeHistoryModel(
+            portfolio_id=portfolio.id,
+            strategy_id=strategy.id,
+            ticker=signal.ticker,
+            side=TradeSide.SELL.value,
+            quantity=quantity,
+            signal_price=signal.signal_price,
+            executed_price=executed_price,
+            gross_notional=gross_notional,
+            slippage_amount=slippage_amount,
+            fees=Decimal("0"),
+            realized_pnl=realized_pnl,
+            reason=signal.reason,
+            executed_at=simulated_dt or datetime.now(timezone.utc),
+        )
+        session.add(trade)
+        await self._enqueue_trade_notification(
+            session=session,
+            strategy=strategy,
+            ticker=signal.ticker,
+            side=TradeSide.SELL,
+            executed_price=executed_price,
+            reason=signal.reason,
         )
 
         await session.delete(position)
@@ -375,3 +395,45 @@ class PaperTradingManager:
         bps = Decimal(self._slippage_bps) / Decimal("10000")
         factor = Decimal("1") + bps if side == TradeSide.BUY else Decimal("1") - bps
         return (raw_price * factor).quantize(Decimal("0.00000001"))
+
+    async def _resolve_allocation_fraction(
+        self,
+        session: AsyncSession,
+        strategy_id: UUID,
+        signal_allocation: Decimal,
+    ) -> Decimal:
+        configured = await session.scalar(
+            select(StrategyAllocationModel).where(StrategyAllocationModel.strategy_id == strategy_id)
+        )
+        if configured is None:
+            return signal_allocation
+        if configured.allocation_fraction <= Decimal("0"):
+            return Decimal("0")
+        return min(signal_allocation, configured.allocation_fraction)
+
+    async def _enqueue_trade_notification(
+        self,
+        session: AsyncSession,
+        strategy: StrategyModel,
+        ticker: str,
+        side: TradeSide,
+        executed_price: Decimal,
+        reason: str | None,
+    ) -> None:
+        payload = {
+            "ticker": ticker,
+            "side": side.value,
+            "price": str(executed_price),
+            "strategy": strategy.strategy_key,
+            "strategy_name": strategy.name,
+            "reason": reason or "",
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        session.add(
+            NotificationQueueModel(
+                strategy_id=strategy.id,
+                strategy_key=strategy.strategy_key,
+                event_type="trade_executed",
+                payload=payload,
+            )
+        )

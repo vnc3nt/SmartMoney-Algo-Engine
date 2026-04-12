@@ -10,15 +10,17 @@ from fastapi import FastAPI
 from app.base import AsyncSessionFactory, settings
 from app.strategies import (
     BaseStrategy,
+    DatabaseSignalStore,
     ExecutionFrequency,
-    InMemorySignalStore,
     MarketDataProvider,
     SignalStore,
     StrategyABCombined,
     StrategyALegalInsider,
     StrategyBUnusualVolume,
+    StrategyCNewsSentiment,
 )
 from app.paper_trading import PaperTradingManager
+from app.optimizer import DynamicAllocator
 
 
 class StrategyOrchestrator:
@@ -43,6 +45,9 @@ class StrategyOrchestrator:
         for strategy_key in self.strategies:
             await self.trading_manager.snapshot_daily_equity(strategy_key)
 
+    async def check_all_exits(self) -> None:
+        await self.trading_manager.check_exits()
+
 
 def build_trigger(freq: ExecutionFrequency):
     if freq == ExecutionFrequency.M1:
@@ -55,15 +60,17 @@ def build_trigger(freq: ExecutionFrequency):
 
 
 market_data = MarketDataProvider()
-signal_store = InMemorySignalStore()
+signal_store = DatabaseSignalStore(AsyncSessionFactory)
 
 strategy_a = StrategyALegalInsider(market_data)
 strategy_b = StrategyBUnusualVolume(market_data)
+strategy_c = StrategyCNewsSentiment(market_data)
 strategy_ab = StrategyABCombined(market_data, signal_store)
 
 strategy_registry: dict[str, BaseStrategy] = {
     strategy_a.strategy_key: strategy_a,
     strategy_b.strategy_key: strategy_b,
+    strategy_c.strategy_key: strategy_c,
     strategy_ab.strategy_key: strategy_ab,
 }
 
@@ -78,6 +85,7 @@ orchestrator = StrategyOrchestrator(
     signal_store=signal_store,
     trading_manager=trading_manager,
 )
+dynamic_allocator = DynamicAllocator(session_factory=AsyncSessionFactory)
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 
@@ -102,10 +110,25 @@ async def lifespan(_: FastAPI):
         max_instances=1,
         coalesce=True,
     )
+    scheduler.add_job(
+        orchestrator.check_all_exits,
+        trigger=IntervalTrigger(minutes=1),
+        id="minute_exit_checks",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=30,
+    )
+    scheduler.add_job(
+        dynamic_allocator.run,
+        trigger=CronTrigger(day_of_week="sun", hour=0, minute=10),
+        id="weekly_dynamic_allocator",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
 
     scheduler.start()
     try:
         yield
     finally:
         scheduler.shutdown(wait=False)
-

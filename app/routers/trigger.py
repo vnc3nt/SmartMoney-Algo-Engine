@@ -6,11 +6,12 @@ from pydantic import BaseModel
 
 from app.base import AsyncSessionFactory
 from app.strategies import (
+    DatabaseSignalStore,
     MarketDataProvider,
     StrategyALegalInsider,
     StrategyBUnusualVolume,
+    StrategyCNewsSentiment,
     StrategyABCombined,
-    InMemorySignalStore,
 )
 from app.paper_trading import PaperTradingManager
 
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/api", tags=["trigger"])
 
 # Shared instances (in Production: dependency injection)
 _market_data = MarketDataProvider()
-_signal_store = InMemorySignalStore()
+_signal_store = DatabaseSignalStore(AsyncSessionFactory)
 _trading_manager = PaperTradingManager(
     session_factory=AsyncSessionFactory,
     market_data=_market_data,
@@ -42,6 +43,7 @@ async def trigger_strategy(strategy_key: str) -> TriggerResponse:
     strategies = {
         "strategy_a_legalinsider": StrategyALegalInsider(_market_data),
         "strategy_b_unusualvolume": StrategyBUnusualVolume(_market_data),
+        "strategy_c_newssentiment": StrategyCNewsSentiment(_market_data),
         "strategy_ab_combined": StrategyABCombined(_market_data, _signal_store),
     }
 
@@ -83,6 +85,7 @@ async def backend_status() -> dict:
         "strategies_available": [
             "strategy_a_legalinsider",
             "strategy_b_unusualvolume",
+            "strategy_c_newssentiment",
             "strategy_ab_combined",
         ],
     }

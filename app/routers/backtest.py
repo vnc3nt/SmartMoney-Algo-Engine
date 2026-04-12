@@ -46,7 +46,12 @@ class BacktestResponse(BaseModel):
     daily_snapshots: list[dict[str, Any]]
 
 
-_SUPPORTED_STRATEGIES = {"strategy_b_unusualvolume"}
+_SUPPORTED_STRATEGIES = {
+    "strategy_a_legalinsider",
+    "strategy_b_unusualvolume",
+    "strategy_c_newssentiment",
+    "strategy_ab_combined",
+}
 
 
 @router.post("/{strategy_key}", response_model=BacktestResponse)

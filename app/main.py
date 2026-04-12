@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import logging
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -18,6 +19,10 @@ from app.routers.portfolio import router as portfolio_router  # noqa: E402
 from app.routers.trigger import router as trigger_router  # noqa: E402
 from app.routers.analytics import router as analytics_router  # noqa: E402
 from app.routers.backtest import router as backtest_router  # noqa: E402
+from app.routers.notifications import router as notifications_router  # noqa: E402
+from app.scheduler import lifespan as scheduler_lifespan  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 
 # 2. Lifespan with startup database seeding
@@ -28,11 +33,10 @@ async def lifespan(_app: FastAPI):
         from seed_database import seed_database
         await seed_database()
     except Exception as e:
-        print(f"Warning: Database seeding failed: {e}")
+        logger.exception("Database seeding failed: %s", e)
 
-    yield
-
-    # Shutdown: TODO: APScheduler stoppen
+    async with scheduler_lifespan(_app):
+        yield
 
 
 # 3. app erstellen
@@ -62,6 +66,7 @@ app.include_router(portfolio_router, tags=["Portfolios"])
 app.include_router(trigger_router, tags=["Trigger"])
 app.include_router(analytics_router, tags=["Analytics"])
 app.include_router(backtest_router, tags=["Backtest"])
+app.include_router(notifications_router, tags=["Notifications"])
 
 
 # 5. Health-Endpunkt

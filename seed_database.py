@@ -10,7 +10,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import StrategyModel, PortfolioModel, TRADES_SCHEMA
+from app.models import StrategyAllocationModel, StrategyModel, PortfolioModel, TRADES_SCHEMA
 
 # Load environment variables
 load_dotenv()
@@ -44,7 +44,7 @@ async def seed_database():
                     print("✓ Strategies already exist, skipping seed")
                     return
 
-                # Define the 3 base strategies
+                # Define the 4 base strategies
                 strategies = [
                     StrategyModel(
                         id=uuid4(),
@@ -68,6 +68,14 @@ async def seed_database():
                         name="Strategy AB: Combined",
                         description="Combines signals from Strategy A and B for higher confidence",
                         execution_frequency="1h",
+                        is_active=True,
+                    ),
+                    StrategyModel(
+                        id=uuid4(),
+                        strategy_key="strategy_c_newssentiment",
+                        name="Strategy C: News Sentiment",
+                        description="Trades on fast sentiment shifts from real-time company news",
+                        execution_frequency="1m",
                         is_active=True,
                     ),
                 ]
@@ -104,12 +112,34 @@ async def seed_database():
                         equity_value=Decimal("100000.0000"),
                         slippage_bps=10,
                     ),
+                    PortfolioModel(
+                        id=uuid4(),
+                        strategy_id=strategies[3].id,
+                        base_currency="USD",
+                        starting_cash=Decimal("100000.0000"),
+                        cash_balance=Decimal("100000.0000"),
+                        equity_value=Decimal("100000.0000"),
+                        slippage_bps=10,
+                    ),
                 ]
 
                 session.add_all(portfolios)
+                allocations = [
+                    StrategyAllocationModel(
+                        id=uuid4(),
+                        strategy_id=strategy.id,
+                        allocation_fraction=Decimal("0.100000"),
+                        is_auto_managed=True,
+                    )
+                    for strategy in strategies
+                ]
+                session.add_all(allocations)
                 await session.commit()
 
-                print(f"✓ Seeded {len(strategies)} strategies and {len(portfolios)} portfolios")
+                print(
+                    f"✓ Seeded {len(strategies)} strategies, {len(portfolios)} portfolios, "
+                    f"and {len(allocations)} allocation records"
+                )
                 for strategy, portfolio in zip(strategies, portfolios):
                     print(f"  - {strategy.name} (ID: {strategy.id})")
 

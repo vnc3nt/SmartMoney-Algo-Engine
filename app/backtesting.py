@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+import logging
 
 import pandas as pd
 import yfinance as yf
@@ -27,14 +28,19 @@ from app.models import (
 )
 from app.paper_trading import PaperTradingManager
 from app.strategies import (
+    InsiderEvent,
     InMemorySignalStore,
     MarketDataProvider,
+    NewsEvent,
     Signal,
+    StrategyABCombined,
     StrategyALegalInsider,
     StrategyBUnusualVolume,
+    StrategyCNewsSentiment,
     VolumeSpike,
 )
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Historical market data provider
@@ -128,6 +134,95 @@ class BacktestStrategyBUnusualVolume(StrategyBUnusualVolume):
         )
 
 
+class BacktestStrategyALegalInsider(StrategyALegalInsider):
+    """Deterministic historical proxy for insider strategy using large up-days."""
+
+    def __init__(self, market_data: BacktestMarketDataProvider, tickers: list[str]) -> None:
+        super().__init__(market_data)
+        self._backtest_provider = market_data
+        self._tickers = tickers
+
+    async def analyze_data(self) -> list[InsiderEvent]:
+        events: list[InsiderEvent] = []
+        for ticker in self._tickers:
+            df = self._backtest_provider._historical_data.get(ticker)
+            if df is None:
+                continue
+            available = df[df.index.date <= self._backtest_provider.current_date]
+            if len(available) < 2:
+                continue
+            curr_row = available.iloc[-1]
+            prev_row = available.iloc[-2]
+            close = Decimal(str(float(curr_row["Close"])))
+            prev_close = Decimal(str(float(prev_row["Close"])))
+            if prev_close <= Decimal("0"):
+                continue
+            jump = (close - prev_close) / prev_close
+            if jump >= Decimal("0.025"):
+                events.append(
+                    InsiderEvent(
+                        ticker=ticker,
+                        insider_role="CEO",
+                        transaction_type="BUY",
+                        shares=100000,
+                        price=close,
+                        filed_at=datetime.combine(
+                            self._backtest_provider.current_date, datetime.min.time()
+                        ).replace(tzinfo=timezone.utc),
+                    )
+                )
+        return events
+
+
+class BacktestStrategyCNewsSentiment(StrategyCNewsSentiment):
+    """Deterministic historical proxy for news strategy using daily return sign."""
+
+    def __init__(self, market_data: BacktestMarketDataProvider, tickers: list[str]) -> None:
+        super().__init__(market_data)
+        self._backtest_provider = market_data
+        self._tickers = tickers
+
+    async def analyze_data(self) -> dict[str, list[NewsEvent]]:
+        analyzed: dict[str, list[NewsEvent]] = {}
+        current_dt = datetime.combine(
+            self._backtest_provider.current_date, datetime.min.time()
+        ).replace(tzinfo=timezone.utc)
+        for ticker in self._tickers:
+            df = self._backtest_provider._historical_data.get(ticker)
+            if df is None:
+                analyzed[ticker] = []
+                continue
+            available = df[df.index.date <= self._backtest_provider.current_date]
+            if len(available) < 2:
+                analyzed[ticker] = []
+                continue
+            curr_row = available.iloc[-1]
+            prev_row = available.iloc[-2]
+            close = Decimal(str(float(curr_row["Close"])))
+            prev_close = Decimal(str(float(prev_row["Close"])))
+            if prev_close <= Decimal("0"):
+                analyzed[ticker] = []
+                continue
+            change_pct = (close - prev_close) / prev_close
+            if change_pct >= Decimal("0.015"):
+                headline = "strong growth beats expectations guidance raised"
+            elif change_pct <= Decimal("-0.015"):
+                headline = "lawsuit guidance cut regulatory probe downgraded"
+            else:
+                headline = "neutral update"
+            analyzed[ticker] = [
+                NewsEvent(
+                    ticker=ticker,
+                    headline=headline,
+                    summary=f"synthetic change={change_pct}",
+                    source="backtest-synthetic",
+                    published_at=current_dt,
+                    url=None,
+                )
+            ]
+        return analyzed
+
+
 # ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
@@ -170,12 +265,16 @@ class BacktestRunner:
     """
 
     SUPPORTED_STRATEGIES = {
+        "strategy_a_legalinsider",
         "strategy_b_unusualvolume",
+        "strategy_c_newssentiment",
+        "strategy_ab_combined",
     }
 
     DEFAULT_TICKERS: dict[str, list[str]] = {
         "strategy_b_unusualvolume": ["AAPL", "TSLA", "MSFT", "NVDA", "AMD"],
         "strategy_a_legalinsider": ["AAPL", "TSLA", "MSFT", "NVDA", "AMD", "GOOG", "META"],
+        "strategy_c_newssentiment": ["AAPL", "TSLA", "MSFT", "NVDA", "AMD", "GOOG", "META"],
         "strategy_ab_combined": ["AAPL", "TSLA", "MSFT", "NVDA", "AMD"],
     }
 
@@ -229,8 +328,8 @@ class BacktestRunner:
 
         # 3. Build simulated market data provider + strategy
         market_data = BacktestMarketDataProvider(historical_data)
-        strategy = self._build_strategy(market_data)
         signal_store = InMemorySignalStore()
+        strategy = self._build_strategy(market_data, signal_store=signal_store)
         trading_manager = PaperTradingManager(
             session_factory=self._session_factory,
             market_data=market_data,
@@ -253,6 +352,15 @@ class BacktestRunner:
             )
 
             try:
+                if self.strategy_key == "strategy_ab_combined":
+                    base_a = self._build_strategy_for_key("strategy_a_legalinsider", market_data, signal_store)
+                    base_b = self._build_strategy_for_key("strategy_b_unusualvolume", market_data, signal_store)
+                    for base_strategy in (base_a, base_b):
+                        base_analyzed = await base_strategy.analyze_data()
+                        base_signals = await base_strategy.generate_signals(base_analyzed)
+                        for sig in base_signals:
+                            await signal_store.record(sig)
+
                 analyzed = await strategy.analyze_data()
                 signals = await strategy.generate_signals(analyzed)
                 for sig in signals:
@@ -269,6 +377,7 @@ class BacktestRunner:
                         snapshot_date_override=current,
                     )
             except Exception:
+                logger.exception("Backtest day failed strategy=%s date=%s", self.strategy_key, current)
                 # Log and continue – don't abort the whole backtest on one bad day
                 await trading_manager.snapshot_daily_equity(
                     self.strategy_key,
@@ -308,21 +417,37 @@ class BacktestRunner:
                 if not df.empty:
                     result[ticker] = df
             except Exception:
+                logger.exception("Historical download failed for ticker=%s", ticker)
                 continue
         return result
 
     def _build_strategy(
         self,
         market_data: BacktestMarketDataProvider,
-    ) -> StrategyBUnusualVolume:
+        signal_store: InMemorySignalStore,
+    ) -> Any:
         """Return the appropriate backtesting strategy variant."""
-        if self.strategy_key == "strategy_b_unusualvolume":
+        return self._build_strategy_for_key(self.strategy_key, market_data, signal_store)
+
+    def _build_strategy_for_key(
+        self,
+        strategy_key: str,
+        market_data: BacktestMarketDataProvider,
+        signal_store: InMemorySignalStore,
+    ) -> Any:
+        if strategy_key == "strategy_a_legalinsider":
+            return BacktestStrategyALegalInsider(market_data, self.tickers)
+        if strategy_key == "strategy_b_unusualvolume":
             strat = BacktestStrategyBUnusualVolume(market_data)
             # Limit to tickers with available historical data
             strat.VOLUME_SPIKE_TICKERS = self.tickers  # type: ignore[attr-defined]
             return strat
+        if strategy_key == "strategy_c_newssentiment":
+            return BacktestStrategyCNewsSentiment(market_data, self.tickers)
+        if strategy_key == "strategy_ab_combined":
+            return StrategyABCombined(market_data, signal_store)
         raise NotImplementedError(
-            f"Backtesting for '{self.strategy_key}' is not yet implemented. "
+            f"Backtesting for '{strategy_key}' is not yet implemented. "
             f"Supported: {list(self.SUPPORTED_STRATEGIES)}"
         )
 
